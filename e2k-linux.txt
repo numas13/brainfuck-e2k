@@ -1,0 +1,12 @@
+[binaries]
+c = 'e2k-linux-cc'
+cpp = 'e2k-linux-c++'
+ar = 'e2k-linux-ar'
+strip = 'e2k-linux-strip'
+exe_wrapper = 'qemu-e2k'
+
+[host_machine]
+system = 'linux'
+cpu_family = 'e2k'
+cpu = 'e2k'
+endian = 'little'
