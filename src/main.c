@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdarg.h>
+#include <inttypes.h>
 #include <unistd.h>
 #include <getopt.h>
 #include <time.h>
@@ -13,6 +14,14 @@
 
 #define TAPE_SIZE 30000
 #define MAX_NESTING 100
+
+typedef struct Stats {
+    uint64_t ops;
+    uint64_t calls;
+    uint64_t branches;
+    uint64_t taken_branches;
+    uint64_t cpu_cycles;
+} Stats;
 
 typedef enum Mode {
     MODE_ASM,
@@ -25,6 +34,7 @@ typedef struct Options {
     bool dump;
     bool dump_only;
     bool time;
+    bool stats;
     char **files;
 } Options;
 
@@ -43,12 +53,13 @@ static bool parse_opts(int argc, char *argv[], Options *opts) {
     for (;;) {
         int option_index = 0;
         static struct option long_options[] = {
-            {"mode",        required_argument, 0, 'm'},
             {"dump",        no_argument,       0, 'd'},
             {"dump-only",   no_argument,       0, 'D'},
+            {"mode",        required_argument, 0, 'm'},
+            {"stats",       no_argument,       0, 's'},
             {0,             0,                 0,  0 }
         };
-        int c = getopt_long(argc, argv, "dDm:t",
+        int c = getopt_long(argc, argv, "dDm:ts",
                 long_options, &option_index);
         if (c == -1) {
             break;
@@ -65,6 +76,9 @@ static bool parse_opts(int argc, char *argv[], Options *opts) {
             break;
         case 't':
             opts->time = true;
+            break;
+        case 's':
+            opts->stats = true;
             break;
         case 'm':
             if (strcmp(optarg, "asm") == 0) {
@@ -95,7 +109,8 @@ static bool parse_opts(int argc, char *argv[], Options *opts) {
 }
 
 #ifdef __e2k__
-void run_program_e2k(const int32_t *code, uint8_t *tape, size_t tape_size);
+void run_program_e2k(const int32_t *code, uint8_t *tape,
+        size_t tape_size, Stats *stats);
 #endif
 
 static inline int32_t make_insn(uint8_t op, int32_t n) {
@@ -235,22 +250,29 @@ static void dump_program(const char *path, const int32_t *code) {
     printf_err("\n");
 }
 
-static void run_program_bc(const int32_t *code, uint8_t *tape, size_t tape_size) {
+static void run_program_bc(const int32_t *code, uint8_t *tape,
+        size_t tape_size, Stats *stats)
+{
     uint32_t pc = 0, i = 0;
     uint8_t cur = tape[i];
 
     for (; code[pc]; ++pc) {
         int32_t n = insn_imm(code[pc]);
 
+        stats->ops += 1;
         switch (code[pc] & OP_MASK) {
         case OP_BEQZ:
+            stats->branches += 1;
             if (cur == 0) {
                 pc += n / 4;
+                stats->taken_branches += 1;
             }
             break;
         case OP_BNEZ:
+            stats->branches += 1;
             if (cur != 0) {
                 pc += n / 4;
+                stats->taken_branches += 1;
             }
             break;
         case OP_ADD:
@@ -262,6 +284,7 @@ static void run_program_bc(const int32_t *code, uint8_t *tape, size_t tape_size)
             cur = tape[i];
             break;
         case OP_CALL:
+            stats->calls += 1;
             switch (n) {
             case FUNC_GETC:
                 cur = getchar();
@@ -323,6 +346,7 @@ int main(int argc, char *argv[], char *envp[]) {
         }
 
         if (!opts.dump_only) {
+            Stats stats = { 0 };
             struct timespec start;
 
             memset(tape, 0, TAPE_SIZE);
@@ -336,12 +360,13 @@ int main(int argc, char *argv[], char *envp[]) {
             case MODE_BC:
 #if __e2k__
                 if (opts.mode == MODE_ASM) {
-                    run_program_e2k(code, tape, TAPE_SIZE);
+                    run_program_e2k(code, tape, TAPE_SIZE, &stats);
                 } else
 #endif
                 {
-                    run_program_bc(code, tape, TAPE_SIZE);
+                    run_program_bc(code, tape, TAPE_SIZE, &stats);
                 }
+
                 break;
             case MODE_NAIVE:
                 run_program_naive(program, tape, TAPE_SIZE);
@@ -365,6 +390,17 @@ int main(int argc, char *argv[], char *envp[]) {
                 }
 
                 printf_err("  Time: %.2f%s\n", time, units);
+            }
+
+            if (opts.stats) {
+                printf_err("  Stats\n");
+                printf_err("         ops: %" PRIu64 "\n", stats.ops);
+                printf_err("       calls: %" PRIu64 "\n", stats.calls);
+                printf_err("    branches: %" PRIu64 " (taken %" PRIu64 ")\n",
+                        stats.branches, stats.taken_branches);
+                if (stats.cpu_cycles) {
+                    printf_err("  cpu cycles: %" PRIu64 "\n", stats.cpu_cycles);
+                }
             }
         }
 
