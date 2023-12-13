@@ -44,6 +44,7 @@
 #define IS_NOT_BRANCH %pred27
 #define IS_ACC_ZERO %pred28
 #define IS_NOT_TAKEN %pred29
+#define IS_BRANCH_NOT_TAKEN %pred30
 
 #define LOOP %ctpr1
 #define CALL %ctpr3
@@ -189,6 +190,11 @@ loop:
         cmpandesb,1,sm INSN_D, OP_ADD, IS_NOT_ADD_D
         cmpandesb,3,sm INSN_D, OP_EXE, IS_NOT_EXE_D
         cmpandesb,4,sm INSN_D, OP_CALL, IS_NOT_CALL_D
+        ! Execute
+        pass IS_NOT_BRANCH, @p0
+        pass IS_NOT_TAKEN, @p1
+        landp ~@p0, @p1, @p4
+        pass @p4, IS_BRANCH_NOT_TAKEN
 
         abn abnf=0, abnt=1
         abp abpf=0, abpt=1
@@ -206,13 +212,17 @@ loop:
     {
         addd,0 NPC_E, 4, NPC_E ? IS_NOT_TAKEN
         addd,1 BRANCH_TARGET_E, 4, NPC_E ? ~IS_NOT_TAKEN
-        addd,3 PC, 8, NPC_D
+        addd,3 PC, 8, NPC_D ? ~IS_NOT_TAKEN
     }
     {
-        ldw,2,sm CODE, NPC_E, INSN_D
+        ldw,2,sm CODE, NPC_E, INSN_D ? ~IS_NOT_TAKEN
 
         addd,0 STATS_BRANCHES, 1, STATS_BRANCHES ? ~IS_NOT_BRANCH
         addd,1 STATS_BRANCHES_TAKEN, 1, STATS_BRANCHES_TAKEN ? ~IS_NOT_TAKEN
+
+        abn abnf=0, abnt=1
+        abp abpf=0, abpt=1
+        ct LOOP ? IS_BRANCH_NOT_TAKEN
     }
     {
         cmpandesb,0,sm INSN_E, OP_MOV, IS_NOT_MOV_E
