@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdarg.h>
+#include <ctype.h>
 #include <inttypes.h>
 #include <unistd.h>
 #include <getopt.h>
@@ -179,8 +180,10 @@ static int32_t* translate_program(char *p, size_t size) {
             c_dec = '<';
             op = OP_MOV;
         count_dec_inc:
-            while (*p == c_inc || *p == c_dec) {
-                n += *p++ == c_inc ? 1 : -1;
+            for (; *p == c_inc || *p == c_dec || isspace(*p); ++p) {
+                if (!isspace(*p)) {
+                    n += *p == c_inc ? 1 : -1;
+                }
             }
             if (n != 0) {
                 o[i++] = make_insn(op, n);
