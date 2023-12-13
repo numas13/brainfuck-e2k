@@ -46,7 +46,6 @@
 #define IS_NOT_TAKEN %pred29
 
 #define LOOP %ctpr1
-#define PIPELINE %ctpr2
 #define CALL %ctpr3
 
     .text
@@ -61,7 +60,7 @@ run_program_e2k:
         addd,1 TAPE, 0, CUR
         addd,2 0, 0, PC
         ldb,3 TAPE, 0, ACC
-        disp PIPELINE, pipeline
+        disp %ctpr1, pipeline
     }
     {
         nop 3
@@ -72,7 +71,7 @@ run_program_e2k:
     }
     {
         rrd,0 %clkr, STATS_CPU_CYCLES
-        ct PIPELINE
+        ct %ctpr1
     }
 
 call:
@@ -125,7 +124,6 @@ call:
     ! II0 - F - Fetch (latency 3)
     ! II1 - D - Decode (latency 3)
     ! II2 - E - Execute (latency 3-7)
-    ! TODO: branch prediction
 pipeline:
     {
         addd,0 PC, 4, NPC_E
@@ -134,10 +132,10 @@ pipeline:
         disp LOOP, loop
     }
     {
+        nop 1
         ldw,2,sm CODE, NPC_E, INSN_D
-        disp PIPELINE, pipeline
-    }
         disp CALL, call
+    }
     {
         cmpandesb,0,sm INSN_E, OP_MOV, IS_NOT_MOV_E
         cmpandesb,1,sm INSN_E, OP_BEQZ, IS_NOT_BEQZ_E
@@ -197,17 +195,38 @@ loop:
         ct LOOP ? ~IS_NOT_EXE_E
     }
     {
-        ! Execute (extra): exit pipeline and call function
-        addd,1 NPC_E, 0, PC ? ~IS_NOT_CALL_E
+        addd,3 NPC_E, 0, PC ? IS_NOT_TAKEN
+        addd,4 BRANCH_TARGET_E, 0, PC ? ~IS_NOT_TAKEN
+
+        ldw,0,sm CODE, NPC_E, INSN_E ? IS_NOT_TAKEN
+        ldw,2,sm CODE, BRANCH_TARGET_E, INSN_E ? ~IS_NOT_TAKEN
+
         ct CALL ? ~IS_NOT_CALL_E
     }
     {
-        ! Execute (extra): restart pipeline
-        addd,0 NPC_E, 0, PC ? IS_NOT_TAKEN
-        addd,1 BRANCH_TARGET_E, 0, PC ? ~IS_NOT_TAKEN
-        addd,2 STATS_BRANCHES, 1, STATS_BRANCHES ? ~IS_NOT_BRANCH
-        addd,3 STATS_BRANCHES_TAKEN, 1, STATS_BRANCHES_TAKEN ? ~IS_NOT_TAKEN
-        ct PIPELINE ? ~IS_NOT_BRANCH
+        addd,0 NPC_E, 4, NPC_E ? IS_NOT_TAKEN
+        addd,1 BRANCH_TARGET_E, 4, NPC_E ? ~IS_NOT_TAKEN
+        addd,3 PC, 8, NPC_D
+    }
+    {
+        ldw,2,sm CODE, NPC_E, INSN_D
+
+        addd,0 STATS_BRANCHES, 1, STATS_BRANCHES ? ~IS_NOT_BRANCH
+        addd,1 STATS_BRANCHES_TAKEN, 1, STATS_BRANCHES_TAKEN ? ~IS_NOT_TAKEN
+    }
+    {
+        cmpandesb,0,sm INSN_E, OP_MOV, IS_NOT_MOV_E
+        cmpandesb,1,sm INSN_E, OP_BEQZ, IS_NOT_BEQZ_E
+        getfd,2,sm INSN_E, 0x7686, IMM_E
+    }
+    {
+        cmpandesb,0,sm INSN_E, OP_BNEZ, IS_NOT_BNEZ_E
+        cmpandesb,1,sm INSN_E, OP_ADD, IS_NOT_ADD_E
+        addd,2,sm NPC_E, IMM_E, BRANCH_TARGET_E
+        cmpandesb,3,sm INSN_E, OP_EXE, IS_NOT_EXE_E
+        cmpandesb,4,sm INSN_E, OP_CALL, IS_NOT_CALL_E
+
+        ct LOOP ? ~IS_NOT_BRANCH
     }
     {
         ! remove end op from counter
