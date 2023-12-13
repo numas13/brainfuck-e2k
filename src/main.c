@@ -17,10 +17,13 @@
 #define MAX_NESTING 100
 
 typedef struct Stats {
-    uint64_t ops;
+    uint64_t adds;
+    uint64_t movs;
+    uint64_t beqz;
+    uint64_t beqz_taken;
+    uint64_t bnez;
+    uint64_t bnez_taken;
     uint64_t calls;
-    uint64_t branches;
-    uint64_t taken_branches;
     uint64_t cpu_cycles;
 } Stats;
 
@@ -262,26 +265,27 @@ static void run_program_bc(const int32_t *code, uint8_t *tape,
     for (; code[pc]; ++pc) {
         int32_t n = insn_imm(code[pc]);
 
-        stats->ops += 1;
         switch (code[pc] & OP_MASK) {
         case OP_BEQZ:
-            stats->branches += 1;
+            stats->beqz += 1;
             if (cur == 0) {
                 pc += n / 4;
-                stats->taken_branches += 1;
+                stats->beqz_taken += 1;
             }
             break;
         case OP_BNEZ:
-            stats->branches += 1;
+            stats->bnez += 1;
             if (cur != 0) {
                 pc += n / 4;
-                stats->taken_branches += 1;
+                stats->bnez_taken += 1;
             }
             break;
         case OP_ADD:
+            stats->adds += 1;
             cur += n;
             break;
         case OP_MOV:
+            stats->movs += 1;
             tape[i] = cur;
             i += n;
             cur = tape[i];
@@ -396,11 +400,27 @@ int main(int argc, char *argv[], char *envp[]) {
             }
 
             if (opts.stats) {
+                uint64_t total = stats.adds + stats.movs + stats.beqz + stats.bnez + stats.calls;
+                uint64_t branches = stats.beqz + stats.bnez;
+                uint64_t branches_taken = stats.beqz_taken + stats.bnez_taken;
+
                 printf_err("  Stats\n");
-                printf_err("         ops: %" PRIu64 "\n", stats.ops);
+                printf_err("         ops: %" PRIu64 "\n", total);
+                printf_err("        adds: %" PRIu64 "\n", stats.adds);
+                printf_err("        movs: %" PRIu64 "\n", stats.movs);
+                printf_err("        beqz: %" PRIu64 " (%.1f%% taken %" PRIu64 ")\n",
+                        stats.beqz,
+                        (double) stats.beqz_taken / stats.beqz * 100,
+                        stats.beqz_taken);
+                printf_err("        bnez: %" PRIu64 " (%.1f%% taken %" PRIu64 ")\n",
+                        stats.bnez,
+                        (double) stats.bnez_taken / stats.bnez * 100,
+                        stats.bnez_taken);
+                printf_err("    branches: %" PRIu64 " (%.1f%% taken %" PRIu64 ")\n",
+                        branches,
+                        (double) branches_taken / branches * 100,
+                        branches_taken);
                 printf_err("       calls: %" PRIu64 "\n", stats.calls);
-                printf_err("    branches: %" PRIu64 " (taken %" PRIu64 ")\n",
-                        stats.branches, stats.taken_branches);
                 if (stats.cpu_cycles) {
                     printf_err("  cpu cycles: %" PRIu64 "\n", stats.cpu_cycles);
                 }

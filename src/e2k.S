@@ -9,11 +9,14 @@
 #define PC %r4
 #define CUR %r5
 #define ACC %r6
-#define STATS_OPS %r7
-#define STATS_CALLS %r8
-#define STATS_BRANCHES %r9
-#define STATS_BRANCHES_TAKEN %r10
-#define STATS_CPU_CYCLES %r11
+#define STATS_ADDS %r7
+#define STATS_MOVS %r8
+#define STATS_BEQZ %r9
+#define STATS_BEQZ_TAKEN %r10
+#define STATS_BNEZ %r11
+#define STATS_BNEZ_TAKEN %r12
+#define STATS_CALLS %r13
+#define STATS_CPU_CYCLES %r14
 
 ! Pipeline registers
 #define NPC_F %b[0]
@@ -41,6 +44,8 @@
 #define IS_NOT_BNEZ_D %pred10
 #define IS_NOT_BNEZ_E %pred11
 
+#define IS_BEQZ_TAKEN %pred25
+#define IS_BNEZ_TAKEN %pred26
 #define IS_NOT_BRANCH %pred27
 #define IS_ACC_ZERO %pred28
 #define IS_NOT_TAKEN %pred29
@@ -64,11 +69,16 @@ run_program_e2k:
         disp %ctpr1, pipeline
     }
     {
-        nop 3
-        ldd,0 STATS, 0, STATS_OPS
-        ldd,2 STATS, 8, STATS_CALLS
-        ldd,3 STATS, 16, STATS_BRANCHES
-        ldd,5 STATS, 24, STATS_BRANCHES_TAKEN
+        ldd,0 STATS, 0, STATS_ADDS
+        ldd,2 STATS, 8, STATS_MOVS
+        ldd,3 STATS, 16, STATS_BEQZ
+        ldd,5 STATS, 24, STATS_BEQZ_TAKEN
+    }
+    {
+        nop 2
+        ldd,0 STATS, 32, STATS_BNEZ
+        ldd,2 STATS, 40, STATS_BNEZ_TAKEN
+        ldd,3 STATS, 48, STATS_CALLS
     }
     {
         rrd,0 %clkr, STATS_CPU_CYCLES
@@ -181,10 +191,13 @@ loop:
         landp  @p0, ~@p1, @p4
         landp ~@p0, ~@p2, @p5
         landp ~@p4, ~@p5, @p6
+        pass @p4, IS_BEQZ_TAKEN
+        pass @p5, IS_BNEZ_TAKEN
         pass @p6, IS_NOT_TAKEN
     }
     {
-        addd,0 STATS_OPS, 1, STATS_OPS
+        addd,0 STATS_ADDS, 1, STATS_ADDS ? ~IS_NOT_ADD_E
+        addd,5 STATS_MOVS, 1, STATS_MOVS ? ~IS_NOT_MOV_E
 
         ! Decode
         cmpandesb,1,sm INSN_D, OP_ADD, IS_NOT_ADD_D
@@ -217,8 +230,10 @@ loop:
     {
         ldw,2,sm CODE, NPC_E, INSN_D ? ~IS_NOT_TAKEN
 
-        addd,0 STATS_BRANCHES, 1, STATS_BRANCHES ? ~IS_NOT_BRANCH
-        addd,1 STATS_BRANCHES_TAKEN, 1, STATS_BRANCHES_TAKEN ? ~IS_NOT_TAKEN
+        addd,0 STATS_BEQZ, 1, STATS_BEQZ ? ~IS_NOT_BEQZ_E
+        addd,1 STATS_BEQZ_TAKEN, 1, STATS_BEQZ_TAKEN ? IS_BEQZ_TAKEN
+        addd,3 STATS_BNEZ, 1, STATS_BNEZ ? ~IS_NOT_BNEZ_E
+        addd,4 STATS_BNEZ_TAKEN, 1, STATS_BNEZ_TAKEN ? IS_BNEZ_TAKEN
 
         abn abnf=0, abnt=1
         abp abpf=0, abpt=1
@@ -239,23 +254,26 @@ loop:
         ct LOOP ? ~IS_NOT_BRANCH
     }
     {
-        ! remove end op from counter
         rrd,0 %clkr, %g16
-        subd,1 STATS_OPS, 1, STATS_OPS
         return %ctpr3
     }
     {
         subd,0 %g16, STATS_CPU_CYCLES, STATS_CPU_CYCLES
-        std,2 STATS_OPS, STATS, 0
-        std,5 STATS_CALLS, STATS, 8
+        std,2 STATS_ADDS, STATS, 0
+        std,5 STATS_MOVS, STATS, 8
     }
     {
-        std,2 STATS_BRANCHES, STATS, 16
-        std,5 STATS_BRANCHES_TAKEN, STATS, 24
+        std,2 STATS_BEQZ, STATS, 16
+        std,5 STATS_BEQZ_TAKEN, STATS, 24
     }
     {
-        nop 3
-        std,2 STATS_CPU_CYCLES, STATS, 32
+        std,2 STATS_BNEZ, STATS, 32
+        std,5 STATS_BNEZ_TAKEN, STATS, 40
+    }
+    {
+        nop 1
+        std,2 STATS_CALLS, STATS, 48
+        std,5 STATS_CPU_CYCLES, STATS, 56
     }
         ct %ctpr3
 
