@@ -9,6 +9,7 @@
 #include <ctype.h>
 #include <inttypes.h>
 #include <unistd.h>
+#include <libgen.h>
 #include <getopt.h>
 #include <time.h>
 #include "bc.h"
@@ -30,6 +31,7 @@ typedef struct Stats {
 typedef enum Mode {
     MODE_ASM,
     MODE_BC,
+    MODE_C,
     MODE_NAIVE,
 } Mode;
 
@@ -89,6 +91,8 @@ static bool parse_opts(int argc, char *argv[], Options *opts) {
                 opts->mode = MODE_ASM;
             } else if (strcmp(optarg, "bc") == 0) {
                 opts->mode = MODE_BC;
+            } else if (strcmp(optarg, "c") == 0) {
+                opts->mode = MODE_C;
             } else if (strcmp(optarg, "naive") == 0) {
                 opts->mode = MODE_NAIVE;
             } else {
@@ -314,6 +318,119 @@ static void run_program_bc(const int32_t *code, uint8_t *tape,
     }
 }
 
+static void falign(FILE *out, int width) {
+    for (int j = 0; j < width; j++) {
+        fputc(' ', out);
+        fputc(' ', out);
+    }
+}
+
+#define afprintf(out, pad, ...) do { \
+        falign(out, pad); \
+        fprintf(out, __VA_ARGS__); \
+    } while(0)
+
+static void c_add(FILE *out, int pad, const char *v, int n) {
+    if (n >= 0) {
+        afprintf(out, pad, "%s += %d;\n", v, n);
+    } else {
+        afprintf(out, pad, "%s -= %d;\n", v, -n);
+    }
+}
+
+static int strip_extension(char *s) {
+    int size = strlen(s);
+    for (int i = size; i--;) {
+        if (s[i] == '.') {
+            s[i] = 0;
+            return i;
+        }
+    }
+    return size;
+}
+
+static void run_program_c(const char *path, const int32_t *code, size_t tape_size)
+{
+    FILE *out;
+    char *path_tmp, *name, *output, *cmd;
+    int n, name_size, pad = 0;
+
+    path_tmp = strdup(path);
+    name = basename(path_tmp);
+    name_size = strip_extension(name);
+    n = name_size + 64;
+    output = malloc(n);
+    snprintf(output, n, "%s.c", name);
+    out = fopen(output, "w");
+    if (!out) {
+        perror("fopen");
+        exit(EXIT_FAILURE);
+    }
+
+    afprintf(out, pad, "#include <stdio.h>\n");
+    afprintf(out, pad, "#include <stdint.h>\n");
+    afprintf(out,   0, "\n");
+    afprintf(out, pad, "int main() {\n");
+    pad += 1;
+    afprintf(out, pad, "uint8_t tape[%lu] = { 0 };\n", tape_size);
+    afprintf(out, pad, "int i = 0;\n");
+    afprintf(out,   0, "\n");
+
+    for (int pc = 0; code[pc]; ++pc) {
+        int32_t n = insn_imm(code[pc]);
+
+        switch (code[pc] & OP_MASK) {
+        case OP_BEQZ:
+            afprintf(out, pad, "while (tape[i] != 0) {\n");
+            pad += 1;
+            break;
+        case OP_BNEZ:
+            pad -= 1;
+            afprintf(out, pad, "}\n");
+            break;
+        case OP_ADD:
+            c_add(out, pad, "tape[i]", n);
+            break;
+        case OP_MOV:
+            c_add(out, pad, "i", n);
+            break;
+        case OP_CALL:
+            switch (n) {
+            case FUNC_GETC:
+                afprintf(out, pad, "tape[i] = getchar();\n");
+                break;
+            case FUNC_PUTC:
+                afprintf(out, pad, "putchar(tape[i]);\n");
+                break;
+#ifdef FUNC_DEBUG
+            case FUNC_DEBUG:
+                break;
+#endif
+            default:
+                abort();
+            }
+            break;
+        default:
+            abort();
+            break;
+        }
+    }
+
+    afprintf(out, pad, "return 0;\n");
+    pad -= 1;
+    afprintf(out, pad, "}\n");
+    fclose(out);
+
+    n = strlen(output) + strlen(name) + 128;
+    cmd = malloc(n);
+    snprintf(cmd, n, "cc -march=native -O3 %s -o %s", output, name);
+    system(cmd);
+
+    free(cmd);
+    free(output);
+    free(path_tmp);
+}
+
 static void run_program_naive(const char *program, uint8_t *tape, size_t tape_size) {
     // TODO:
 }
@@ -340,6 +457,7 @@ int main(int argc, char *argv[], char *envp[]) {
         switch (opts.mode) {
         case MODE_ASM:
         case MODE_BC:
+        case MODE_C:
             code = translate_program(program, size);
             if (opts.dump) {
                 dump_program(path, code);
@@ -375,6 +493,8 @@ int main(int argc, char *argv[], char *envp[]) {
                 }
 
                 break;
+            case MODE_C:
+                run_program_c(path, code, TAPE_SIZE);
             case MODE_NAIVE:
                 run_program_naive(program, tape, TAPE_SIZE);
                 break;
